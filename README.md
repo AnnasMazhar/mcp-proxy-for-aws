@@ -97,7 +97,7 @@ docker build -t mcp-proxy-for-aws .
 | `endpoint`	          | MCP endpoint URL (e.g., `https://your-service.us-east-1.amazonaws.com/mcp`)	                                                                                                                                                            | N/A	                                                                        |Yes	|
 | ---	                 | ---	                                                                                                                                                                                                                                    | ---	                                                                        |---	|
 | `--service`	         | AWS service name for SigV4 signing, if omitted we try to infer this from the url	                                                                                                                                                       | Inferred from endpoint if not provided	                                     |No	|
-| `--profile`	         | AWS profile for AWS credentials to use	                                                                                                                                                                                                 | Uses `AWS_PROFILE` environment variable if not set                          |No	|
+| `--profile`	         | AWS profile(s) to use. First profile is the default. Additional profiles enable per-call switching via `aws_profile` tool parameter (e.g., `--profile default dev staging`) | Uses `AWS_PROFILE` environment variable if not set                          |No	|
 | `--region`	          | AWS region to use	                                                                                                                                                                                                                      | Uses `AWS_REGION` environment variable if not set	                           |No	|
 | `--metadata`	        | Metadata to inject into MCP requests as key=value pairs (e.g., `--metadata KEY1=value1 KEY2=value2`)                                                                                                                                    | `AWS_REGION` is automatically injected based on `--region` if not provided    |No	|
 | `--read-only`	       | Disable tools which may require write permissions (tools which DO NOT require write permissions are annotated with [`readOnlyHint=true`](https://modelcontextprotocol.io/specification/2025-06-18/schema#toolannotations-readonlyhint)) | `False`	                                                                    |No	|
@@ -109,7 +109,6 @@ docker build -t mcp-proxy-for-aws .
 | `--write-timeout`	   | Set desired write timeout in seconds	                                                                                                                                                                                                   | 180	                                                                        |No	|
 | `--tool-timeout`	   | Maximum seconds a tool call may take before being cancelled. When set, returns a graceful error to the agent instead of hanging indefinitely	                                                                                             | 300	                                                                    |No	|
 | `--disable-telemetry` | Disables telemetry data collection                                                                                                                                                                                                      | `False`                                                                     |No	|
-| `--allow-switch-profile` | Enable per-call AWS profile switching by providing an allowlist of profile names. Each tool call can include a `profile` argument to route through a dedicated connection signed with that profile's credentials. | None (disabled) | No |
 
 ### Optional Environment Variables
 
@@ -166,14 +165,14 @@ Add the following configuration to your MCP client config file (e.g., for Kiro C
 > [!NOTE]
 > Cline users should not use `--log-level` argument because Cline checks the log messages in stderr for text "error" (case insensitive).
 
-#### Multi-account access with `--allow-switch-profile`
+#### Multi-account access
 
-The `--allow-switch-profile` flag lets individual tool calls route through different AWS profiles without restarting the proxy. This is useful when an AI agent needs to query resources across multiple AWS accounts in a single session.
+When multiple profiles are passed to `--profile`, individual tool calls can route through different AWS profiles without restarting the proxy. This is useful when an AI agent needs to query resources across multiple AWS accounts in a single session.
 
-**How it interacts with `--profile`:**
-- `--profile` sets the **default** identity used when a tool call does not specify a profile.
-- `--allow-switch-profile` defines which additional profiles a tool call may request via a `profile` argument. Each profile gets its own dedicated connection to the backend.
-- If a tool call omits `profile`, the default `--profile` connection is used. If it includes `profile`, the request is routed through the matching per-profile connection instead.
+**How it works:**
+- The first profile is the **default** identity used when a tool call does not specify a profile.
+- Additional profiles are available for per-call switching via the `aws_profile` tool parameter. Each profile gets its own dedicated connection to the backend.
+- If a tool call omits `aws_profile`, the default profile connection is used. If it includes `aws_profile`, the request is routed through the matching per-profile connection instead.
 
 ```json
 {
@@ -187,7 +186,6 @@ The `--allow-switch-profile` flag lets individual tool calls route through diffe
         "<SigV4 MCP endpoint URL>",
         "--profile",
         "default",
-        "--allow-switch-profile",
         "dev-profile",
         "staging-profile"
       ]
@@ -196,7 +194,7 @@ The `--allow-switch-profile` flag lets individual tool calls route through diffe
 }
 ```
 
-In the example above, tool calls without a `profile` argument use the `default` profile. A tool call that includes `"profile": "dev-profile"` is routed through a dedicated connection signed with `dev-profile` credentials.
+In the example above, tool calls without an `aws_profile` argument use the `default` profile. A tool call that includes `"aws_profile": "dev-profile"` is routed through a dedicated connection signed with `dev-profile` credentials.
 
 #### Using Docker
 

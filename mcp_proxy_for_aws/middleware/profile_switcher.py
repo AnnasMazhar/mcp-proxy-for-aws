@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Middleware that enables per-call AWS profile overrides via a ``proxy_profile`` argument.
+"""Middleware that enables per-call AWS profile overrides via an ``aws_profile`` argument.
 
-Pass ``proxy_profile`` as an extra argument on any tool call to route that single request
+Pass ``aws_profile`` as an extra argument on any tool call to route that single request
 through a dedicated transport signed with the specified profile's credentials. The
 argument is stripped before forwarding to the backend.
 
@@ -41,12 +41,12 @@ logger = logging.getLogger(__name__)
 
 
 class ProfileOverrideMiddleware(Middleware):
-    """Middleware that intercepts ``proxy_profile`` on any tool call for per-request AWS identity switching.
+    """Middleware that intercepts ``aws_profile`` on any tool call for per-request AWS identity switching.
 
-    When a tool call includes a ``proxy_profile`` argument, the middleware:
+    When a tool call includes an ``aws_profile`` argument, the middleware:
 
     1. Validates the profile against the allowed list
-    2. Strips ``proxy_profile`` from the arguments
+    2. Strips ``aws_profile`` from the arguments
     3. Forwards the call through a dedicated per-profile MCP client
 
     Each profile gets its own transport and session to the backend so that
@@ -81,7 +81,7 @@ class ProfileOverrideMiddleware(Middleware):
         context: MiddlewareContext[mt.ListToolsRequest],
         call_next: CallNext[mt.ListToolsRequest, Sequence[Tool]],
     ) -> Sequence[Tool]:
-        """Inject ``proxy_profile`` into every tool's schema."""
+        """Inject ``aws_profile`` into every tool's schema."""
         tools = await call_next(context)
 
         for tool in tools:
@@ -91,13 +91,13 @@ class ProfileOverrideMiddleware(Middleware):
             params = copy.deepcopy(tool.parameters)
             if 'properties' not in params:
                 params['properties'] = {}
-            if 'proxy_profile' in params['properties']:
+            if 'aws_profile' in params['properties']:
                 logger.warning(
-                    'Tool %r already defines a "proxy_profile" parameter; '
+                    'Tool %r already defines an "aws_profile" parameter; '
                     'the middleware override is shadowing the backend definition.',
                     tool.name,
                 )
-            params['properties']['proxy_profile'] = {
+            params['properties']['aws_profile'] = {
                 'type': 'string',
                 'description': (
                     'AWS CLI profile to sign this request with. Omit to use the default profile.'
@@ -116,10 +116,10 @@ class ProfileOverrideMiddleware(Middleware):
         context: MiddlewareContext[mt.CallToolRequestParams],
         call_next: CallNext[mt.CallToolRequestParams, ToolResult],
     ) -> ToolResult:
-        """Intercept ``proxy_profile`` and route through a dedicated per-profile client."""
+        """Intercept ``aws_profile`` and route through a dedicated per-profile client."""
         arguments = context.message.arguments
-        if isinstance(arguments, dict) and 'proxy_profile' in arguments:
-            profile = arguments['proxy_profile']
+        if isinstance(arguments, dict) and 'aws_profile' in arguments:
+            profile = arguments['aws_profile']
             return await self._call_with_profile(profile, context, call_next)
 
         return await call_next(context)
@@ -171,9 +171,9 @@ class ProfileOverrideMiddleware(Middleware):
                 f'Profile {profile!r} is not in the allowed list. Allowed profiles: {allowed}'
             )
 
-        # Strip proxy_profile before forwarding to the backend
+        # Strip aws_profile before forwarding to the backend
         arguments: dict[str, Any] = dict(cast(dict[str, Any], context.message.arguments))
-        arguments.pop('proxy_profile', None)
+        arguments.pop('aws_profile', None)
 
         logger.info(
             'Per-call profile override: routing through dedicated connection for %s', profile

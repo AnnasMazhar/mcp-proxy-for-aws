@@ -64,8 +64,11 @@ async def run_proxy(args) -> None:
     if args.metadata:
         metadata.update(args.metadata)
 
-    # Get profile
-    profile = args.profile
+    # Get profile(s)
+    profiles: list[str] = args.profiles if args.profiles else []
+    default_profile = profiles[0] if profiles else None
+    # Dedup switch profiles and exclude the default profile
+    switch_profiles = list(dict.fromkeys(p for p in profiles[1:] if p != default_profile))
 
     # Log server configuration
     logger.info(
@@ -73,7 +76,7 @@ async def run_proxy(args) -> None:
         service,
         region,
         metadata,
-        profile,
+        default_profile,
     )
 
     timeout = httpx.Timeout(
@@ -85,7 +88,7 @@ async def run_proxy(args) -> None:
 
     # Create transport with SigV4 authentication
     transport = create_transport_with_sigv4(
-        args.endpoint, service, region, metadata, timeout, profile, args.disable_telemetry
+        args.endpoint, service, region, metadata, timeout, default_profile, args.disable_telemetry
     )
     client_factory = AWSMCPProxyClientFactory(transport)
 
@@ -106,7 +109,7 @@ async def run_proxy(args) -> None:
         add_tool_filtering_middleware(proxy, args.read_only)
 
         profile_middleware = add_profile_override_middleware(
-            proxy, args, service, region, metadata, timeout
+            proxy, switch_profiles, service, region, metadata, timeout, args.endpoint
         )
 
         if args.retries:
@@ -134,36 +137,37 @@ def add_tool_error_middleware(mcp: FastMCP, tool_timeout: float) -> None:
 
 def add_profile_override_middleware(
     mcp: FastMCP,
-    args,
+    switch_profiles: list[str],
     service: str,
     region: str,
     metadata: dict,
     timeout: httpx.Timeout,
+    endpoint: str,
 ) -> ProfileOverrideMiddleware | None:
     """Add profile override middleware to target MCP server.
 
     Args:
         mcp: The FastMCP instance to add profile override to
-        args: The parsed CLI arguments
+        switch_profiles: List of additional profiles the agent can switch to
         service: The AWS service name
         region: The AWS region
         metadata: The metadata dictionary
         timeout: The httpx timeout configuration
+        endpoint: The MCP endpoint URL
 
     Returns:
         The ProfileOverrideMiddleware instance if added, None otherwise
     """
-    allowed_profiles = getattr(args, 'allow_switch_profile', None)
-    if not isinstance(allowed_profiles, list) or not allowed_profiles:
+    if not switch_profiles:
         return None
     logger.info('Adding profile override middleware')
     middleware = ProfileOverrideMiddleware(
-        allowed_profiles=allowed_profiles,
+        allowed_profiles=switch_profiles,
         service=service,
         region=region,
         metadata=metadata,
         timeout=timeout,
-        endpoint=args.endpoint,
+        endpoint=endpoint,
     )
     mcp.add_middleware(middleware)
     return middleware

@@ -14,6 +14,7 @@
 
 """Tests for the mcp-proxy-for-aws Server."""
 
+import httpx
 from fastmcp.client.transports import ClientTransport
 from mcp_proxy_for_aws.server import (
     add_retry_middleware,
@@ -53,7 +54,7 @@ class TestServer:
         mock_args.endpoint = 'https://test.example.com'
         mock_args.service = 'test-service'
         mock_args.region = 'us-east-1'
-        mock_args.profile = None
+        mock_args.profiles = None
         mock_args.read_only = True
         mock_args.retries = 1
         mock_args.metadata = None
@@ -125,7 +126,7 @@ class TestServer:
         mock_args.endpoint = 'https://test.example.com'
         mock_args.service = 'test-service'
         mock_args.region = 'us-east-1'
-        mock_args.profile = 'test-profile'
+        mock_args.profiles = ['test-profile']
         mock_args.read_only = False
         mock_args.retries = 0  # No retries
         mock_args.metadata = {'AWS_REGION': 'eu-west-1', 'CUSTOM_KEY': 'custom_value'}
@@ -199,7 +200,7 @@ class TestServer:
         mock_args.endpoint = 'https://test.example.com'
         mock_args.service = 'test-service'
         mock_args.region = 'ap-southeast-1'
-        mock_args.profile = None
+        mock_args.profiles = None
         mock_args.read_only = False
         mock_args.retries = 0
         mock_args.metadata = None  # No metadata provided
@@ -254,7 +255,7 @@ class TestServer:
         mock_args.endpoint = 'https://test.example.com'
         mock_args.service = 'test-service'
         mock_args.region = 'us-west-1'
-        mock_args.profile = None
+        mock_args.profiles = None
         mock_args.read_only = False
         mock_args.retries = 0
         mock_args.metadata = {'CUSTOM_KEY': 'custom_value', 'ANOTHER_KEY': 'another_value'}
@@ -332,7 +333,7 @@ class TestServer:
         assert args.endpoint == 'https://test.example.com'
         assert args.service is None
         assert args.region is None
-        assert args.profile is None
+        assert args.profiles is None
         assert args.read_only is False
         assert args.log_level == 'ERROR'
         assert args.retries == 0
@@ -448,3 +449,49 @@ class TestServer:
                 server_module.main()
             # Since we're not actually running as __main__, we just verify the structure exists
             assert mock_main.call_count == 0  # Should not be called in test context
+
+
+class TestProfileDedup:
+    """Tests for profile deduplication in run_proxy."""
+
+    def test_duplicate_switch_profiles_are_deduped(self):
+        """Duplicate profiles in the switch list are removed."""
+        from mcp_proxy_for_aws.server import add_profile_override_middleware
+
+        mcp = Mock()
+        # If we pass duplicates, the middleware should only get unique ones
+        result = add_profile_override_middleware(
+            mcp,
+            switch_profiles=['dev', 'dev', 'staging', 'staging'],
+            service='test',
+            region='us-east-1',
+            metadata={},
+            timeout=httpx.Timeout(30),
+            endpoint='https://test.example.com',
+        )
+        assert result is not None
+        assert result._allowed_profiles == {'dev', 'staging'}
+
+    def test_default_profile_excluded_from_switch_list(self):
+        """If default profile appears in switch list, it's excluded."""
+        profiles = ['default', 'default', 'dev', 'staging']
+        default_profile = profiles[0]
+        switch_profiles = list(dict.fromkeys(p for p in profiles[1:] if p != default_profile))
+        assert switch_profiles == ['dev', 'staging']
+
+    def test_single_profile_no_middleware(self):
+        """Single profile means no switch profiles, no middleware."""
+        from mcp_proxy_for_aws.server import add_profile_override_middleware
+
+        mcp = Mock()
+        result = add_profile_override_middleware(
+            mcp,
+            switch_profiles=[],
+            service='test',
+            region='us-east-1',
+            metadata={},
+            timeout=httpx.Timeout(30),
+            endpoint='https://test.example.com',
+        )
+        assert result is None
+        mcp.add_middleware.assert_not_called()
