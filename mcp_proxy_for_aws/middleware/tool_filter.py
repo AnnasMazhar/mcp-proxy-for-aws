@@ -13,10 +13,25 @@
 # limitations under the License.
 
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.tools import Tool
 from typing import Sequence
+
+
+# Assumes AWS API naming conventions (get_/list_/describe_ = read-only).
+# File upstream issue on awslabs/mcp for proper readOnlyHint annotations.
+
+# Remote MCP servers may not set readOnlyHint=true for their tools,
+# but tools with these naming patterns never mutate state.
+_READ_ONLY_TOOL_PREFIXES = (
+    re.compile(r'^(list|read|search|get|describe|retrieve|recommend)_'),
+)
+
+# Reserved for future edge cases where a tool name matches the heuristic
+# but is actually mutating — override here to force it as write-only.
+_HEURISTIC_DENY_LIST: set[str] = set()
 
 
 class ToolFilteringMiddleware(Middleware):
@@ -46,12 +61,20 @@ class ToolFilteringMiddleware(Middleware):
             # Check the tool annotations and disable if needed
             annotations = tool.annotations
 
-            # Skip the tools with no readOnlyHint=True annotation
+            # Skip the tools with no readOnlyHint=True annotation,
+            # unless the tool name is inherently read-only
             read_only_hint = getattr(annotations, 'readOnlyHint', False)
             if not read_only_hint:
-                # Skip tools that don't have readOnlyHint=True
-                self.logger.info('Skipping tool %s needing write permissions', tool.name)
-                continue
+                # Check if the tool name matches a read-only prefix pattern
+                name_is_read_only = any(
+                    read_only_prefix.match(tool.name)
+                    for read_only_prefix in _READ_ONLY_TOOL_PREFIXES
+                )
+                if not name_is_read_only:
+                    # Skip tools that don't have readOnlyHint=True and
+                    # whose name doesn't indicate a read-only operation
+                    self.logger.info('Skipping tool %s needing write permissions', tool.name)
+                    continue
 
             filtered_tools.append(tool)
 
